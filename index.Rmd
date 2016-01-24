@@ -1,0 +1,243 @@
+---
+title: "Practical Machine Learning assignment"
+author: "Yuriy Barvinchenko"
+date: "January 2016"
+output: html_document
+---
+
+##Summary
+This publication is answer for PML assignment. 
+Main target is to build model, that can predict if physical exersize was fullfiled correctly based on sensors data.
+Best result was shown by random forest and all 20 testing cases were predicted correctly.
+
+##Data source
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+Sensors were located on forearm, arm, belt and dumbbell.
+Read more:  <http://groupware.les.inf.puc-rio.br/har>.
+
+We read data, use training data and leave 20 test cases for some time.
+```{r lib_load, echo=FALSE, warning=FALSE, message=FALSE}
+library(caret)
+library(lattice)
+library("rpart")
+library("rpart.plot")
+library("rattle")
+library(parallel)
+library(doParallel)
+library("randomForest")
+# library("earth")
+# getwd()
+
+train <- read.csv2("C:/Users/Barv/Documents/R/RR2/pml-training.csv", sep=",", dec=".")
+test  <- read.csv2("C:/Users/Barv/Documents/R/RR2/pml-testing.csv" , sep=",", dec=".")
+
+train$classe <- as.factor(train$classe)
+
+set.seed(4970)
+inTrain = createDataPartition(train$classe, p = 0.6)[[1]]
+
+training = train[ inTrain,]
+
+testing1 =  train[-inTrain,]
+vld = createDataPartition(testing1$classe, p = 0.5)[[1]]
+
+validat <- testing1[vld,]
+testing <- testing1[-vld,]
+```
+Trainig dataset was splited on training/test/validation/testing in 60%/20%/20% proportion.
+
+Cases were done in sets, called windows. Data about kurtosis, skewness, minimum, maximum, amplitude, standard deviation, varibility and average presented for each type of sensor only once per window. In 95% cases these variables contains no value or NA. 
+So we can exclude such variables from our models.  
+```{r vars, echo= FALSE}
+# remove unused variables
+n.cl <- names(training)
+wv <- n.cl[ ! grepl("kurtosis", n.cl)]
+wv <- wv[ ! grepl("skewness", wv)]
+wv <- wv[ ! grepl("max_", wv)]
+wv <- wv[ ! grepl("min_", wv)]
+wv <- wv[ ! grepl("var_", wv)]
+wv <- wv[ ! grepl("avg_", wv)]
+wv <- wv[ ! grepl("stddev", wv)]
+wv <- wv[ ! grepl("amplitude", wv)]
+
+wv <- wv[8:60 ]
+tr.set <- training[, wv]
+vld.set <- validat[, wv]
+```
+
+##Predictiom models   
+
+###Tree  
+Let's start with tree, they are easy to understand.
+I've built 2 tree models: with caret and rpart packages.
+```{r trees, echo= FALSE, cache=TRUE}
+tree <- train(classe ~ ., data = tr.set, method = "rpart")
+tree2 <- rpart(classe ~ ., data=tr.set, method="class")
+```
+
+
+Classification tree built with rpart package:
+```{r tr1, echo=FALSE}
+fancyRpartPlot(tree2, sub = "" , cex=0.3)
+```
+
+```{r tr_cm, echo=FALSE}
+# conf matrix
+pr.tree <- predict(tree, newdata=validat) 
+cm.tree <- confusionMatrix(pr.tree, validat$classe)
+# Accuracy
+acc.tree <- cm.tree$overall['Accuracy']
+
+# conf matrix tree 2
+pr.tre2 <- predict(tree2, newdata=validat , type = "class")
+cm.tre2 <- confusionMatrix(pr.tre2, validat$classe)
+# Accuracy
+acc.tre2 <- cm.tre2$overall['Accuracy']
+```
+
+Accuracy of tree (caret) is `r acc.tree` and tree (rpart) is `r acc.tre2`, that's pretty low.
+
+###Random forest
+```{r rfr, echo= FALSE, cache=TRUE, warning=FALSE, message=FALSE}
+##########################################################
+# Configure parallel processing
+##########################################################
+
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+# Step 2: Configure trainControl object
+# The most critical arguments for the trainControl function are the resampling metdhod method, the number that specifies the quantity of folds for k-fold cross-validation, and allowParallel which tells caret to use the cluster that we've registered in the previous step.
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = TRUE)
+# Step 3: Develop training model
+#########################################################
+rf.rf=randomForest(classe~.,data=tr.set,ntree=100, importance=TRUE)
+```
+
+Random forest model takes a long time, so I used parallel functionality.
+```{r rfplot, echo=FALSE}
+varImpPlot(rf.rf, main = "Variable importance from random forest", cex=0.8)
+```
+  
+```{r rf.acc, echo=FALSE, warning=FALSE, message=FALSE}
+pr.rf <- predict(rf.rf, newdata=validat, type = "class")
+cm.rf <- confusionMatrix(pr.rf, validat$classe)
+# Accuracy
+acc.rf <- cm.rf$overall['Accuracy']
+# acc.rf
+# 0.9926077 
+```
+Accuracy of random forest is `r acc.rf` that is much better than for decision trees.
+
+###Generalized Boosted Models   
+For GBM parallel calculation was used also.
+```{r gmb_, echo=FALSE, cache=TRUE, warning=FALSE, message=FALSE}
+gbm <- train(classe ~ ., data = tr.set, method="gbm", trControl= fitControl, verbose=F) # , verbose=F - for silent
+pr.gbm <- predict(gbm, newdata=validat, type = "raw")
+
+
+cm.gbm <- confusionMatrix(pr.gbm, validat$classe)
+# Accuracy
+acc.gbm <- cm.gbm$overall['Accuracy']
+# acc.gbm
+# 0.9556462 
+
+varImp(gbm)
+```
+Accuracy of GBM is `r acc.gbm`.
+
+Marginal effect of the selected variables (Generalized Boosted Model)
+```{r gbm.plot, echo=FALSE, warning=FALSE, message=FALSE}
+library(gbm)
+plot(gbm)
+```
+
+
+###Bagging
+```{r baggins, echo=FALSE, cache= TRUE, warning=FALSE, message=FALSE}
+# run bagging algorithm
+bag2 <- train(classe ~ .,data=tr.set,method="treebag")
+
+pr.bg2 <- predict(bag2, newdata=validat)
+
+cm.bg2 <- confusionMatrix(pr.bg2, validat$classe)
+# Accuracy
+acc.bg2 <- cm.bg2$overall['Accuracy']
+# acc.bg2
+# 0.9849605 
+```
+Accuracy of bagging is `r acc.bg2`.  
+
+```{r bg_plot, echo=FALSE, warning=FALSE, message=FALSE}
+# varImp(Mod3)
+plot(varImp(bag2), main = "Top 10  variable importance from bagging", top = 10)
+```
+
+##Model selection
+```{r valide, echo=FALSE, warning=FALSE, message=FALSE}
+pr.rft <- predict(rf.rf, newdata=testing, type = "class")
+cm.rft <- confusionMatrix(pr.rft, testing$classe)
+# Accuracy
+acc.rft <- cm.rft$overall['Accuracy']
+# acc.rft
+# 0.9938822  
+
+pr.gbmt <- predict(gbm, newdata=testing, type = "raw")
+cm.gbmt <- confusionMatrix(pr.gbmt, testing$classe)
+# Accuracy
+acc.gbmt <- cm.gbmt$overall['Accuracy']
+# acc.gbmt
+# 0.9602345 
+
+pr.bg2t <- predict(bag2, newdata=testing) # , type = "raw"
+cm.bg2t <- confusionMatrix(pr.bg2t, testing$classe)
+# Accuracy
+acc.bg2t <- cm.bg2t$overall['Accuracy']
+# acc.bg2t
+# 0.9852154 
+
+```
+  
+Trees have much lower accuracy, so to final stage cam 3 other models.
+Here we make double check on test and validation data. 
+```{r m_sel, echo=FALSE }
+t1 <- data.frame(rf=acc.rf, 
+                    GBM=acc.gbm,
+                    bagging=acc.bg2)
+v1 <- data.frame(   rf=acc.rft, 
+                    GBM=acc.gbmt,
+                    bagging=acc.bg2t)
+tv <- rbind(t1,v1)
+row.names(tv) <- c( "test", "validation")
+library(knitr)
+print("models accuracy")
+kable(tv)
+```
+
+I selected random forest with 99.1% accuracy, and second choice is bagging with 98.3-98.5%.
+
+##Answers for 20 training cases 
+calucated with random forest
+```{r fin, echo=FALSE}
+
+
+
+# Step 4: De-register parallel processing cluster
+
+# After processing the data, we explicitly shut down the cluster by calling the stopCluster() function.
+
+# stopCluster(cluster)
+
+
+#######
+# final
+#######
+
+pr.f <- predict(rf.rf, newdata=test, type = "class")
+pr.f
+```
+
+P.S.Special thanks to Leonard Greski for github and parallel hints on forum
