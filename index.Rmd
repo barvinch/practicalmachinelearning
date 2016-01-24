@@ -48,6 +48,7 @@ Trainig dataset was splited on training/test/validation/testing in 60%/20%/20% p
 
 Cases were done in sets, called windows. Data about kurtosis, skewness, minimum, maximum, amplitude, standard deviation, varibility and average presented for each type of sensor only once per window. In 95% cases these variables contains no value or NA. 
 So we can exclude such variables from our models.  
+Final set of variables stored in tr.set dataframe.  
 ```{r vars, echo= FALSE}
 # remove unused variables
 n.cl <- names(training)
@@ -70,6 +71,10 @@ vld.set <- validat[, wv]
 ###Tree  
 Let's start with tree, they are easy to understand.
 I've built 2 tree models: with caret and rpart packages.
+```{r eval=FALSE}
+train(classe ~ ., data = tr.set, method = "rpart")
+rpart(classe ~ ., data=tr.set, method="class")
+```
 ```{r trees, echo= FALSE, cache=TRUE}
 tree <- train(classe ~ ., data = tr.set, method = "rpart")
 tree2 <- rpart(classe ~ ., data=tr.set, method="class")
@@ -117,7 +122,11 @@ fitControl <- trainControl(method = "cv",
 rf.rf=randomForest(classe~.,data=tr.set,ntree=100, importance=TRUE)
 ```
 
+I built model with 100 trees.
 Random forest model takes a long time, so I used parallel functionality.
+```{r eval=FALSE}
+randomForest(classe~.,data=tr.set,ntree=100, importance=TRUE)
+```
 ```{r rfplot, echo=FALSE}
 varImpPlot(rf.rf, main = "Variable importance from random forest", cex=0.8)
 ```
@@ -134,6 +143,11 @@ Accuracy of random forest is `r acc.rf` that is much better than for decision tr
 
 ###Generalized Boosted Models   
 For GBM parallel calculation was used also.
+Default values were used for this model.
+```{r eval=FALSE}
+train(classe ~ ., data = tr.set, method="gbm", trControl= fitControl, verbose=F)
+```
+
 ```{r gmb_, echo=FALSE, cache=TRUE, warning=FALSE, message=FALSE}
 gbm <- train(classe ~ ., data = tr.set, method="gbm", trControl= fitControl, verbose=F) # , verbose=F - for silent
 pr.gbm <- predict(gbm, newdata=validat, type = "raw")
@@ -169,6 +183,11 @@ acc.bg2 <- cm.bg2$overall['Accuracy']
 # acc.bg2
 # 0.9849605 
 ```
+Default values were used for this model.
+```{r eval=FALSE}
+train(classe ~ .,data=tr.set,method="treebag")
+```
+
 Accuracy of bagging is `r acc.bg2`.  
 
 ```{r bg_plot, echo=FALSE, warning=FALSE, message=FALSE}
@@ -218,6 +237,9 @@ kable(tv)
 ```
 
 I selected random forest with 99.1% accuracy, and second choice is bagging with 98.3-98.5%.
+
+###Out of sample error
+Out of sample error for random forest is 0.009 or 0.9% (1-0.991)
 
 ##Answers for 20 training cases 
 calucated with random forest
